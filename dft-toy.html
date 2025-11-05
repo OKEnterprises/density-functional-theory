@@ -1,0 +1,730 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>1D DFT Toy - Interactive Density Functional Theory</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+        }
+        .description {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .controls {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .control-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: inline-block;
+            width: 200px;
+            font-weight: bold;
+        }
+        input[type="range"] {
+            width: 300px;
+        }
+        button {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 5px;
+        }
+        button:hover {
+            background: #45a049;
+        }
+        .info {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 10px;
+        }
+        .info-item {
+            padding: 10px;
+            background: #f9f9f9;
+            border-radius: 4px;
+        }
+        canvas {
+            border: 1px solid #ccc;
+            background: white;
+            display: block;
+            margin: 10px auto;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .convergence {
+            font-family: monospace;
+            font-size: 12px;
+            max-height: 200px;
+            overflow-y: auto;
+            background: #f9f9f9;
+            padding: 10px;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+    <h1>1D Density Functional Theory Toy</h1>
+
+    <div class="description">
+        <h3>What is this?</h3>
+        <p>This is a simple 1D implementation of Density Functional Theory (DFT) solving the Kohn-Sham equations for a model atom.
+        You can adjust parameters and watch the self-consistent field (SCF) iterations converge to the ground state!</p>
+        <p><strong>How it works:</strong> We solve for non-interacting electrons in an effective potential,
+        iteratively updating the density until convergence.</p>
+    </div>
+
+    <div class="controls">
+        <h3>Controls</h3>
+        <div class="control-group">
+            <label>Number of Electrons:</label>
+            <input type="range" id="numElectrons" min="1" max="4" value="2" step="1">
+            <span id="numElectronsValue">2</span>
+        </div>
+        <div class="control-group">
+            <label>Nuclear Charge (Z):</label>
+            <input type="range" id="nuclearCharge" min="1" max="6" value="2" step="1">
+            <span id="nuclearChargeValue">2</span>
+        </div>
+        <div class="control-group">
+            <label>Grid Points:</label>
+            <input type="range" id="gridPoints" min="64" max="512" value="256" step="64">
+            <span id="gridPointsValue">256</span>
+        </div>
+        <div class="control-group">
+            <label>Box Size:</label>
+            <input type="range" id="boxSize" min="5" max="20" value="10" step="1">
+            <span id="boxSizeValue">10</span>
+        </div>
+        <div class="control-group">
+            <label>Mixing Parameter:</label>
+            <input type="range" id="mixing" min="0.1" max="1.0" value="0.3" step="0.1">
+            <span id="mixingValue">0.3</span>
+        </div>
+        <button onclick="runDFT()">Run DFT Calculation</button>
+        <button onclick="stepDFT()">Step One Iteration</button>
+        <button onclick="resetDFT()">Reset</button>
+    </div>
+
+    <div class="info">
+        <h3>Calculation Info</h3>
+        <div class="info-grid">
+            <div class="info-item"><strong>Iteration:</strong> <span id="iteration">0</span></div>
+            <div class="info-item"><strong>Total Energy:</strong> <span id="totalEnergy">-</span></div>
+            <div class="info-item"><strong>Density Change:</strong> <span id="densityChange">-</span></div>
+            <div class="info-item"><strong>Converged:</strong> <span id="converged">No</span></div>
+        </div>
+        <div style="margin-top: 15px;">
+            <strong>Convergence Log:</strong>
+            <div class="convergence" id="convergenceLog"></div>
+        </div>
+    </div>
+
+    <canvas id="canvas" width="1000" height="800"></canvas>
+
+    <script>
+        // Global state
+        let state = {
+            iteration: 0,
+            converged: false,
+            density: null,
+            orbitals: null,
+            eigenvalues: null,
+            potential: null,
+            grid: null
+        };
+
+        // Physical constants (atomic units)
+        const HBAR = 1.0;
+        const M_E = 1.0;
+        const E_CHARGE = 1.0;
+
+        // Numerical parameters
+        let params = {
+            numElectrons: 2,
+            nuclearCharge: 2,
+            gridPoints: 256,
+            boxSize: 10,
+            mixing: 0.3,
+            maxIterations: 100,
+            convergenceThreshold: 1e-6
+        };
+
+        // Initialize
+        function init() {
+            updateControlValues();
+            setupEventListeners();
+            resetDFT();
+        }
+
+        function updateControlValues() {
+            document.getElementById('numElectronsValue').textContent = params.numElectrons;
+            document.getElementById('nuclearChargeValue').textContent = params.nuclearCharge;
+            document.getElementById('gridPointsValue').textContent = params.gridPoints;
+            document.getElementById('boxSizeValue').textContent = params.boxSize;
+            document.getElementById('mixingValue').textContent = params.mixing.toFixed(1);
+        }
+
+        function setupEventListeners() {
+            const controls = ['numElectrons', 'nuclearCharge', 'gridPoints', 'boxSize', 'mixing'];
+            controls.forEach(control => {
+                document.getElementById(control).addEventListener('input', (e) => {
+                    params[control] = parseFloat(e.target.value);
+                    updateControlValues();
+                });
+            });
+        }
+
+        function resetDFT() {
+            state.iteration = 0;
+            state.converged = false;
+
+            // Create 1D grid
+            const N = params.gridPoints;
+            const L = params.boxSize;
+            const dx = 2 * L / N;
+            state.grid = {
+                N: N,
+                L: L,
+                dx: dx,
+                x: Array.from({length: N}, (_, i) => -L + i * dx)
+            };
+
+            // Initialize density with a guess (Gaussian)
+            state.density = state.grid.x.map(x => {
+                const sigma = 1.0;
+                return params.numElectrons / (sigma * Math.sqrt(2 * Math.PI)) * Math.exp(-x*x / (2*sigma*sigma));
+            });
+
+            // Normalize density
+            normalizeDensity(state.density, params.numElectrons);
+
+            state.orbitals = null;
+            state.eigenvalues = null;
+
+            updateInfo();
+            document.getElementById('convergenceLog').textContent = '';
+            visualize();
+        }
+
+        function normalizeDensity(density, numElectrons) {
+            const integral = integrate(density, state.grid.dx);
+            const factor = numElectrons / integral;
+            for (let i = 0; i < density.length; i++) {
+                density[i] *= factor;
+            }
+        }
+
+        function integrate(f, dx) {
+            // Simple trapezoidal rule
+            let sum = 0.5 * (f[0] + f[f.length - 1]);
+            for (let i = 1; i < f.length - 1; i++) {
+                sum += f[i];
+            }
+            return sum * dx;
+        }
+
+        // External potential (soft Coulomb potential)
+        function externalPotential(x, Z) {
+            const softening = 1.0; // Prevents singularity at r=0
+            return -Z / Math.sqrt(x*x + softening);
+        }
+
+        // Hartree potential (classical electron-electron repulsion)
+        function computeHartreePotential(density, grid) {
+            const V_H = new Array(grid.N);
+            for (let i = 0; i < grid.N; i++) {
+                let sum = 0;
+                for (let j = 0; j < grid.N; j++) {
+                    if (i !== j) {
+                        const r = Math.abs(grid.x[i] - grid.x[j]);
+                        const softening = 0.5;
+                        sum += density[j] / Math.sqrt(r*r + softening);
+                    }
+                }
+                V_H[i] = sum * grid.dx;
+            }
+            return V_H;
+        }
+
+        // Exchange-correlation potential (LDA)
+        function computeXCPotential(density) {
+            // Simple LDA: V_xc = -C * rho^(1/3)
+            const C_x = Math.pow(3.0 / Math.PI, 1.0/3.0);
+            return density.map(rho => {
+                if (rho < 1e-10) return 0;
+                return -C_x * Math.pow(Math.abs(rho), 1.0/3.0);
+            });
+        }
+
+        // Effective potential
+        function computeEffectivePotential(density, grid, Z) {
+            const V_ext = grid.x.map(x => externalPotential(x, Z));
+            const V_H = computeHartreePotential(density, grid);
+            const V_xc = computeXCPotential(density);
+
+            const V_eff = new Array(grid.N);
+            for (let i = 0; i < grid.N; i++) {
+                V_eff[i] = V_ext[i] + V_H[i] + V_xc[i];
+            }
+
+            return V_eff;
+        }
+
+        // Solve Kohn-Sham equations using finite differences
+        function solveKohnSham(V_eff, grid, numElectrons) {
+            const N = grid.N;
+            const dx = grid.dx;
+
+            // Build Hamiltonian matrix (tridiagonal)
+            const H = Array.from({length: N}, () => Array(N).fill(0));
+
+            const kinetic_factor = HBAR * HBAR / (2 * M_E * dx * dx);
+
+            for (let i = 0; i < N; i++) {
+                H[i][i] = 2 * kinetic_factor + V_eff[i];
+                if (i > 0) H[i][i-1] = -kinetic_factor;
+                if (i < N-1) H[i][i+1] = -kinetic_factor;
+            }
+
+            // Solve eigenvalue problem (using power iteration for lowest eigenvalues)
+            const numOrbitals = Math.ceil(numElectrons / 2); // Spin degeneracy
+            const {eigenvalues, eigenvectors} = solveLowestEigenvalues(H, numOrbitals);
+
+            return {eigenvalues, orbitals: eigenvectors};
+        }
+
+        // Simple power iteration to find lowest eigenvalues
+        function solveLowestEigenvalues(H, numEigenvalues) {
+            const N = H.length;
+            const eigenvalues = [];
+            const eigenvectors = [];
+
+            for (let k = 0; k < numEigenvalues; k++) {
+                // Initialize random vector
+                let v = Array.from({length: N}, () => Math.random() - 0.5);
+
+                // Orthogonalize against previous eigenvectors
+                for (let i = 0; i < eigenvectors.length; i++) {
+                    const dot = dotProduct(v, eigenvectors[i]);
+                    for (let j = 0; j < N; j++) {
+                        v[j] -= dot * eigenvectors[i][j];
+                    }
+                }
+
+                // Normalize
+                v = normalize(v);
+
+                // Power iteration
+                for (let iter = 0; iter < 100; iter++) {
+                    const Hv = matrixVectorMultiply(H, v);
+
+                    // Orthogonalize
+                    for (let i = 0; i < eigenvectors.length; i++) {
+                        const dot = dotProduct(Hv, eigenvectors[i]);
+                        for (let j = 0; j < N; j++) {
+                            Hv[j] -= dot * eigenvectors[i][j];
+                        }
+                    }
+
+                    const norm = vectorNorm(Hv);
+                    for (let j = 0; j < N; j++) {
+                        v[j] = Hv[j] / norm;
+                    }
+                }
+
+                // Compute eigenvalue
+                const Hv = matrixVectorMultiply(H, v);
+                const eigenvalue = dotProduct(v, Hv);
+
+                eigenvalues.push(eigenvalue);
+                eigenvectors.push(v);
+            }
+
+            return {eigenvalues, eigenvectors};
+        }
+
+        function matrixVectorMultiply(M, v) {
+            const result = new Array(v.length).fill(0);
+            for (let i = 0; i < M.length; i++) {
+                for (let j = 0; j < M[i].length; j++) {
+                    result[i] += M[i][j] * v[j];
+                }
+            }
+            return result;
+        }
+
+        function dotProduct(v1, v2) {
+            let sum = 0;
+            for (let i = 0; i < v1.length; i++) {
+                sum += v1[i] * v2[i];
+            }
+            return sum;
+        }
+
+        function vectorNorm(v) {
+            return Math.sqrt(dotProduct(v, v));
+        }
+
+        function normalize(v) {
+            const norm = vectorNorm(v);
+            return v.map(x => x / norm);
+        }
+
+        // Compute new density from orbitals
+        function computeDensity(orbitals, numElectrons) {
+            const N = orbitals[0].length;
+            const density = new Array(N).fill(0);
+
+            // Each orbital can hold 2 electrons (spin up and down)
+            let electronsLeft = numElectrons;
+            for (let i = 0; i < orbitals.length; i++) {
+                const occupation = Math.min(2, electronsLeft);
+                for (let j = 0; j < N; j++) {
+                    density[j] += occupation * orbitals[i][j] * orbitals[i][j];
+                }
+                electronsLeft -= occupation;
+            }
+
+            return density;
+        }
+
+        // SCF step
+        function stepDFT() {
+            if (state.converged) {
+                log('Already converged!');
+                return;
+            }
+
+            state.iteration++;
+
+            // Compute effective potential
+            state.potential = computeEffectivePotential(state.density, state.grid, params.nuclearCharge);
+
+            // Solve Kohn-Sham equations
+            const result = solveKohnSham(state.potential, state.grid, params.numElectrons);
+            state.orbitals = result.orbitals;
+            state.eigenvalues = result.eigenvalues;
+
+            // Compute new density
+            const newDensity = computeDensity(state.orbitals, params.numElectrons);
+
+            // Mix densities for stability
+            const densityChange = computeDensityChange(state.density, newDensity);
+
+            for (let i = 0; i < state.density.length; i++) {
+                state.density[i] = (1 - params.mixing) * state.density[i] + params.mixing * newDensity[i];
+            }
+
+            // Check convergence
+            if (densityChange < params.convergenceThreshold) {
+                state.converged = true;
+            }
+
+            // Compute total energy
+            const totalEnergy = computeTotalEnergy();
+
+            log(`Iter ${state.iteration}: E = ${totalEnergy.toFixed(6)}, Δρ = ${densityChange.toExponential(3)}`);
+
+            updateInfo();
+            visualize();
+        }
+
+        function computeDensityChange(oldDensity, newDensity) {
+            let change = 0;
+            for (let i = 0; i < oldDensity.length; i++) {
+                change += Math.abs(newDensity[i] - oldDensity[i]);
+            }
+            return change * state.grid.dx;
+        }
+
+        function computeTotalEnergy() {
+            if (!state.eigenvalues) return 0;
+
+            // Sum of eigenvalues
+            let E_sum = 0;
+            let electronsLeft = params.numElectrons;
+            for (let i = 0; i < state.eigenvalues.length; i++) {
+                const occupation = Math.min(2, electronsLeft);
+                E_sum += occupation * state.eigenvalues[i];
+                electronsLeft -= occupation;
+            }
+
+            // Hartree correction (double counting)
+            const V_H = computeHartreePotential(state.density, state.grid);
+            let E_H = 0;
+            for (let i = 0; i < state.density.length; i++) {
+                E_H += state.density[i] * V_H[i];
+            }
+            E_H *= 0.5 * state.grid.dx;
+
+            // Exchange-correlation energy
+            const C_x = 0.75 * Math.pow(3.0 / Math.PI, 1.0/3.0);
+            let E_xc = 0;
+            for (let i = 0; i < state.density.length; i++) {
+                if (state.density[i] > 1e-10) {
+                    E_xc += -C_x * Math.pow(state.density[i], 4.0/3.0);
+                }
+            }
+            E_xc *= state.grid.dx;
+
+            return E_sum - E_H + E_xc;
+        }
+
+        function runDFT() {
+            resetDFT();
+
+            let iterations = 0;
+            const interval = setInterval(() => {
+                if (state.converged || iterations >= params.maxIterations) {
+                    clearInterval(interval);
+                    if (state.converged) {
+                        log('Converged!');
+                    } else {
+                        log('Max iterations reached without convergence');
+                    }
+                    return;
+                }
+                stepDFT();
+                iterations++;
+            }, 100);
+        }
+
+        function updateInfo() {
+            document.getElementById('iteration').textContent = state.iteration;
+            document.getElementById('totalEnergy').textContent = state.eigenvalues ?
+                computeTotalEnergy().toFixed(6) : '-';
+            document.getElementById('converged').textContent = state.converged ? 'Yes' : 'No';
+
+            if (state.iteration > 0) {
+                // Compute density change from visualization
+                document.getElementById('densityChange').textContent = 'See log';
+            }
+        }
+
+        function log(message) {
+            const logDiv = document.getElementById('convergenceLog');
+            logDiv.textContent += message + '\n';
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+
+        // Visualization
+        function visualize() {
+            const canvas = document.getElementById('canvas');
+            const ctx = canvas.getContext('2d');
+            const width = canvas.width;
+            const height = canvas.height;
+
+            // Clear
+            ctx.fillStyle = 'white';
+            ctx.fillRect(0, 0, width, height);
+
+            // Set up coordinate system
+            const margin = 60;
+            const plotWidth = width - 2 * margin;
+            const plotHeight = (height - 4 * margin) / 3;
+
+            // Helper function to map data to screen coordinates
+            function mapX(x) {
+                return margin + (x + state.grid.L) / (2 * state.grid.L) * plotWidth;
+            }
+
+            function mapY(y, yMin, yMax, plotIndex) {
+                const plotY = margin + plotIndex * (plotHeight + margin);
+                return plotY + plotHeight - (y - yMin) / (yMax - yMin) * plotHeight;
+            }
+
+            // Draw grid and axes
+            function drawAxes(plotIndex, label, yMin, yMax) {
+                const plotY = margin + plotIndex * (plotHeight + margin);
+
+                ctx.strokeStyle = '#ddd';
+                ctx.lineWidth = 1;
+
+                // Grid
+                for (let i = 0; i <= 5; i++) {
+                    const y = plotY + (i / 5) * plotHeight;
+                    ctx.beginPath();
+                    ctx.moveTo(margin, y);
+                    ctx.lineTo(margin + plotWidth, y);
+                    ctx.stroke();
+                }
+
+                // Axes
+                ctx.strokeStyle = 'black';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(margin, plotY);
+                ctx.lineTo(margin, plotY + plotHeight);
+                ctx.lineTo(margin + plotWidth, plotY + plotHeight);
+                ctx.stroke();
+
+                // Labels
+                ctx.fillStyle = 'black';
+                ctx.font = '14px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText(label, width / 2, plotY - 10);
+
+                ctx.textAlign = 'right';
+                ctx.fillText(yMax.toFixed(2), margin - 10, plotY + 5);
+                ctx.fillText(yMin.toFixed(2), margin - 10, plotY + plotHeight + 5);
+
+                if (plotIndex === 2) {
+                    ctx.textAlign = 'center';
+                    ctx.fillText('Position x (a.u.)', width / 2, plotY + plotHeight + 40);
+                }
+            }
+
+            // Plot 1: Orbitals
+            if (state.orbitals) {
+                const colors = ['#e74c3c', '#3498db', '#2ecc71', '#f39c12'];
+                let yMin = -0.5;
+                let yMax = 0.5;
+
+                // Find range
+                for (let orbital of state.orbitals) {
+                    for (let val of orbital) {
+                        yMin = Math.min(yMin, val);
+                        yMax = Math.max(yMax, val);
+                    }
+                }
+
+                drawAxes(0, 'Orbitals φᵢ(x)', yMin, yMax);
+
+                state.orbitals.forEach((orbital, orbIndex) => {
+                    ctx.strokeStyle = colors[orbIndex % colors.length];
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    for (let i = 0; i < state.grid.N; i++) {
+                        const x = mapX(state.grid.x[i]);
+                        const y = mapY(orbital[i], yMin, yMax, 0);
+                        if (i === 0) ctx.moveTo(x, y);
+                        else ctx.lineTo(x, y);
+                    }
+                    ctx.stroke();
+
+                    // Legend
+                    const legendX = width - margin - 100;
+                    const legendY = margin + 20 + orbIndex * 20;
+                    ctx.fillStyle = colors[orbIndex % colors.length];
+                    ctx.fillRect(legendX, legendY - 10, 15, 15);
+                    ctx.fillStyle = 'black';
+                    ctx.textAlign = 'left';
+                    ctx.fillText(`φ${orbIndex + 1} (E=${state.eigenvalues[orbIndex].toFixed(3)})`, legendX + 20, legendY);
+                });
+            }
+
+            // Plot 2: Electron Density
+            if (state.density) {
+                const yMin = 0;
+                const yMax = Math.max(...state.density) * 1.1;
+
+                drawAxes(1, 'Electron Density ρ(x)', yMin, yMax);
+
+                ctx.fillStyle = 'rgba(52, 152, 219, 0.3)';
+                ctx.strokeStyle = '#3498db';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(mapX(state.grid.x[0]), mapY(0, yMin, yMax, 1));
+                for (let i = 0; i < state.grid.N; i++) {
+                    const x = mapX(state.grid.x[i]);
+                    const y = mapY(state.density[i], yMin, yMax, 1);
+                    ctx.lineTo(x, y);
+                }
+                ctx.lineTo(mapX(state.grid.x[state.grid.N - 1]), mapY(0, yMin, yMax, 1));
+                ctx.closePath();
+                ctx.fill();
+                ctx.stroke();
+            }
+
+            // Plot 3: Potentials
+            if (state.potential) {
+                const V_ext = state.grid.x.map(x => externalPotential(x, params.nuclearCharge));
+
+                let yMin = Math.min(...state.potential, ...V_ext);
+                let yMax = Math.max(...state.potential, ...V_ext);
+                yMin = Math.max(yMin, -10); // Clamp for visualization
+                yMax = Math.min(yMax, 5);
+
+                drawAxes(2, 'Potentials', yMin, yMax);
+
+                // External potential
+                ctx.strokeStyle = '#95a5a6';
+                ctx.lineWidth = 2;
+                ctx.setLineDash([5, 5]);
+                ctx.beginPath();
+                for (let i = 0; i < state.grid.N; i++) {
+                    const x = mapX(state.grid.x[i]);
+                    const y = mapY(Math.max(V_ext[i], yMin), yMin, yMax, 2);
+                    if (i === 0) ctx.moveTo(x, y);
+                    else ctx.lineTo(x, y);
+                }
+                ctx.stroke();
+                ctx.setLineDash([]);
+
+                // Effective potential
+                ctx.strokeStyle = '#9b59b6';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                for (let i = 0; i < state.grid.N; i++) {
+                    const x = mapX(state.grid.x[i]);
+                    const y = mapY(Math.max(state.potential[i], yMin), yMin, yMax, 2);
+                    if (i === 0) ctx.moveTo(x, y);
+                    else ctx.lineTo(x, y);
+                }
+                ctx.stroke();
+
+                // Legend
+                ctx.fillStyle = 'black';
+                ctx.textAlign = 'left';
+                ctx.font = '12px Arial';
+
+                ctx.strokeStyle = '#95a5a6';
+                ctx.setLineDash([5, 5]);
+                ctx.beginPath();
+                ctx.moveTo(width - margin - 150, margin + plotHeight * 2 + margin * 2 + 20);
+                ctx.lineTo(width - margin - 120, margin + plotHeight * 2 + margin * 2 + 20);
+                ctx.stroke();
+                ctx.setLineDash([]);
+                ctx.fillText('V_ext (nuclear)', width - margin - 115, margin + plotHeight * 2 + margin * 2 + 24);
+
+                ctx.strokeStyle = '#9b59b6';
+                ctx.beginPath();
+                ctx.moveTo(width - margin - 150, margin + plotHeight * 2 + margin * 2 + 40);
+                ctx.lineTo(width - margin - 120, margin + plotHeight * 2 + margin * 2 + 40);
+                ctx.stroke();
+                ctx.fillText('V_eff (total)', width - margin - 115, margin + plotHeight * 2 + margin * 2 + 44);
+            }
+        }
+
+        // Initialize on load
+        window.onload = init;
+    </script>
+</body>
+</html>
